@@ -6,3 +6,9 @@ insightface
 onnxruntime
 python-multipart
 gunicorn
+
+flask
+requests
+qdrant-client
+opencv-python-headless
+
