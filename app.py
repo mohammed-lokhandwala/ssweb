@@ -10,7 +10,7 @@ from flask import Flask, request, jsonify, render_template_string
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, PointStruct, VectorParams
 
-app = Flask(**name**)
+app = Flask(__name__)
 
 # 🔥 HuggingFace ML API
 
