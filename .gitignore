@@ -1,0 +1,7 @@
+qdrant_db/
+faces_backup.json
+images/
+search/
+__pycache__/
+*.pyc
+.env
