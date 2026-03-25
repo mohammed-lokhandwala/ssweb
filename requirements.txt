@@ -1,7 +1,7 @@
-flask
-opencv-python-headless
+fastapi
+uvicorn
 numpy
+opencv-python-headless
 insightface
-qdrant-client
 onnxruntime
-gunicorn
+python-multipart

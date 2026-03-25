@@ -4,16 +4,17 @@ import numpy as np
 import base64
 import json
 import shutil
+import requests
 from pathlib import Path
 from flask import Flask, request, jsonify, render_template_string
-from insightface.app import FaceAnalysis
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, PointStruct, VectorParams
 
-app = Flask(__name__)
+app = Flask(**name**)
 
-face_app = FaceAnalysis(name="buffalo_l", providers=["CPUExecutionProvider"])
-face_app.prepare(ctx_id=-1, det_size=(640, 640))
+# 🔥 HuggingFace ML API
+
+ML_API = "https://mohammedlokhandwala-ssweb.hf.space/extract"
 
 DB_PATH   = Path("./qdrant_db")
 LOCK_FILE = DB_PATH / ".lock"
@@ -22,51 +23,64 @@ BACKUP    = Path("./faces_backup.json")
 _db = None
 
 def _bust_lock():
-    if LOCK_FILE.exists():
-        try:
-            LOCK_FILE.unlink()
-        except Exception as e:
-            shutil.rmtree(DB_PATH, ignore_errors=True)
+if LOCK_FILE.exists():
+try:
+LOCK_FILE.unlink()
+except Exception:
+shutil.rmtree(DB_PATH, ignore_errors=True)
 
 def get_db():
-    global _db
-    if _db is None:
-        _bust_lock()
-        try:
-            _db = QdrantClient(path=str(DB_PATH))
-        except Exception:
-            _db = QdrantClient(":memory:")
-            _restore_backup(_db)
-    return _db
+global _db
+if _db is None:
+_bust_lock()
+try:
+_db = QdrantClient(path=str(DB_PATH))
+except Exception:
+_db = QdrantClient(":memory:")
+_restore_backup(_db)
+return _db
 
 def _restore_backup(client):
-    if not BACKUP.exists():
-        return
-    try:
-        data = json.loads(BACKUP.read_text())
-        if not data:
-            return
-        if not client.collection_exists("faces"):
-            client.create_collection("faces", vectors_config=VectorParams(size=512, distance=Distance.COSINE))
-        pts = [PointStruct(id=r["id"], vector=r["vector"], payload=r["payload"]) for r in data]
-        client.upsert("faces", points=pts)
-    except Exception:
-        pass
+if not BACKUP.exists():
+return
+try:
+data = json.loads(BACKUP.read_text())
+if not data:
+return
+if not client.collection_exists("faces"):
+client.create_collection("faces", vectors_config=VectorParams(size=512, distance=Distance.COSINE))
+pts = [PointStruct(id=r["id"], vector=r["vector"], payload=r["payload"]) for r in data]
+client.upsert("faces", points=pts)
+except Exception:
+pass
 
 def _save_backup(client):
-    try:
-        pts, _ = client.scroll("faces", limit=10000, with_payload=True, with_vectors=True)
-        data = [{"id": p.id, "vector": p.vector, "payload": p.payload} for p in pts]
-        BACKUP.write_text(json.dumps(data))
-    except Exception:
-        pass
+try:
+pts, _ = client.scroll("faces", limit=10000, with_payload=True, with_vectors=True)
+data = [{"id": p.id, "vector": p.vector, "payload": p.payload} for p in pts]
+BACKUP.write_text(json.dumps(data))
+except Exception:
+pass
 
 def ensure_collection():
-    client = get_db()
-    if not client.collection_exists("faces"):
-        client.create_collection("faces", vectors_config=VectorParams(size=512, distance=Distance.COSINE))
+client = get_db()
+if not client.collection_exists("faces"):
+client.create_collection("faces", vectors_config=VectorParams(size=512, distance=Distance.COSINE))
 
 ensure_collection()
+
+# 🔥 CALL ML API
+
+def get_embeddings_from_ml(img):
+_, buffer = cv2.imencode(".jpg", img)
+files = {"file": ("image.jpg", buffer.tobytes(), "image/jpeg")}
+try:
+res = requests.post(ML_API, files=files, timeout=30)
+return res.json()
+except Exception as e:
+return {"error": str(e)}
+
+# ================= HTML (YOUR ORIGINAL UI) =================
 
 HTML = r"""<!DOCTYPE html>
 <html lang="en">
@@ -426,82 +440,119 @@ loadDbStats();
 </body>
 </html>"""
 
+# ================= UTILS =================
+
 def decode_image(b64_str):
-    img_bytes = base64.b64decode(b64_str)
-    arr = np.frombuffer(img_bytes, np.uint8)
-    return cv2.imdecode(arr, cv2.IMREAD_COLOR)
+img_bytes = base64.b64decode(b64_str)
+arr = np.frombuffer(img_bytes, np.uint8)
+return cv2.imdecode(arr, cv2.IMREAD_COLOR)
 
 def encode_image(img, quality=70):
-    _, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, quality])
-    return base64.b64encode(buf).decode()
+_, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, quality])
+return base64.b64encode(buf).decode()
 
 @app.route("/")
 def index():
-    return render_template_string(HTML)
+return render_template_string(HTML)
+
+# ================= INDEX =================
 
 @app.route("/api/index", methods=["POST"])
 def api_index():
-    ensure_collection()
-    client = get_db()
-    data = request.json
-    img = decode_image(data["image"])
-    if img is None:
-        return jsonify({"error": "Could not decode image"})
-    faces = face_app.get(img)
-    count = client.count("faces").count
-    for i, face in enumerate(faces):
-        client.upsert("faces", points=[PointStruct(
-            id=count + i,
-            vector=face.normed_embedding.tolist(),
-            payload={"file": data["filename"], "face": i}
-        )])
-    _save_backup(client)
-    return jsonify({"faces": len(faces)})
+ensure_collection()
+client = get_db()
+data = request.json
+
+```
+img = decode_image(data["image"])
+if img is None:
+    return jsonify({"error": "Could not decode image"})
+
+ml_res = get_embeddings_from_ml(img)
+if "error" in ml_res:
+    return jsonify({"error": ml_res["error"]})
+
+embeddings = ml_res.get("faces", [])
+count = client.count("faces").count
+
+for i, emb in enumerate(embeddings):
+    client.upsert("faces", points=[PointStruct(
+        id=count + i,
+        vector=emb,
+        payload={"file": data["filename"], "face": i}
+    )])
+
+_save_backup(client)
+return jsonify({"faces": len(embeddings)})
+```
+
+# ================= SEARCH =================
 
 @app.route("/api/search", methods=["POST"])
 def api_search():
-    ensure_collection()
-    client = get_db()
-    data = request.json
-    threshold = float(data.get("threshold", 0.5))
-    img = decode_image(data["image"])
-    if img is None:
-        return jsonify({"error": "Could not decode image"})
-    faces = face_app.get(img)
-    results = []
-    for i, face in enumerate(faces):
-        raw = client.query_points("faces", query=face.normed_embedding.tolist(), limit=10).points
-        matches = []
-        for r in raw:
-            if r.score >= threshold:
-                thumb = None
-                src_path = Path("images") / r.payload["file"]
-                if src_path.exists():
-                    src = cv2.imread(str(src_path))
-                    if src is not None:
-                        thumb = encode_image(cv2.resize(src, (80, 80)))
-                matches.append({"file": r.payload["file"], "face_index": r.payload["face"], "score": round(r.score, 4), "thumbnail": thumb})
-        results.append({"face_index": i, "matches": matches})
-    return jsonify({"results": results})
+ensure_collection()
+client = get_db()
+data = request.json
+
+```
+threshold = float(data.get("threshold", 0.5))
+
+img = decode_image(data["image"])
+if img is None:
+    return jsonify({"error": "Could not decode image"})
+
+ml_res = get_embeddings_from_ml(img)
+if "error" in ml_res:
+    return jsonify({"error": ml_res["error"]})
+
+embeddings = ml_res.get("faces", [])
+results = []
+
+for i, emb in enumerate(embeddings):
+    raw = client.query_points("faces", query=emb, limit=10).points
+    matches = []
+
+    for r in raw:
+        if r.score >= threshold:
+            matches.append({
+                "file": r.payload["file"],
+                "face_index": r.payload["face"],
+                "score": round(r.score, 4),
+                "thumbnail": None
+            })
+
+    results.append({"face_index": i, "matches": matches})
+
+return jsonify({"results": results})
+```
+
+# ================= CLEAR =================
 
 @app.route("/api/clear", methods=["POST"])
 def api_clear():
-    client = get_db()
-    if client.collection_exists("faces"):
-        client.delete_collection("faces")
-    ensure_collection()
-    if BACKUP.exists():
-        BACKUP.unlink()
-    return jsonify({"message": "Collection cleared and recreated."})
+client = get_db()
+if client.collection_exists("faces"):
+client.delete_collection("faces")
+ensure_collection()
+if BACKUP.exists():
+BACKUP.unlink()
+return jsonify({"message": "Collection cleared and recreated."})
+
+# ================= STATS =================
 
 @app.route("/api/stats")
 def api_stats():
-    ensure_collection()
-    client = get_db()
-    total = client.count("faces").count
-    pts, _ = client.scroll("faces", limit=200, with_payload=True, with_vectors=False)
-    points = [{"id": p.id, "file": p.payload.get("file","?"), "face": p.payload.get("face",0)} for p in pts]
-    return jsonify({"total": total, "points": points})
+ensure_collection()
+client = get_db()
 
-if __name__ == "__main__":
-    app.run(debug=False, host="0.0.0.0", port=5050)
+```
+total = client.count("faces").count
+pts, _ = client.scroll("faces", limit=200, with_payload=True, with_vectors=False)
+
+points = [{"id": p.id, "file": p.payload.get("file","?"), "face": p.payload.get("face",0)} for p in pts]
+
+return jsonify({"total": total, "points": points})
+```
+
+if **name** == "**main**":
+app.run(debug=False, host="0.0.0.0", port=5050)
