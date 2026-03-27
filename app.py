@@ -475,7 +475,11 @@ def decode_image(b64_str):
 
 
 # ================= ROUTES =================
+@app.route("/health")
+def health():
+    return "ok", 200
 
+    
 @app.route("/")
 def index():
     return render_template_string(HTML)
