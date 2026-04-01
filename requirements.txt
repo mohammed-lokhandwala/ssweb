@@ -1,14 +1,6 @@
-fastapi
-uvicorn
-numpy
-opencv-python-headless
-insightface
-onnxruntime
-python-multipart
-gunicorn
-
 flask
+gunicorn
 requests
 qdrant-client
 opencv-python-headless
-
+numpy

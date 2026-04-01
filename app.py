@@ -977,8 +977,8 @@ def admin():
 @app.route("/api/search", methods=["POST"])
 def api_search():
     ensure_collection()
-    client    = get_db()
-    data      = request.json
+    client = get_db()
+    data = request.json
     threshold = float(data.get("threshold", 0.5))
 
     img = decode_image(data["image"])
@@ -990,26 +990,36 @@ def api_search():
         return jsonify({"error": ml_res["error"]})
 
     embeddings = ml_res.get("faces", [])
-    results    = []
+
+    global_match_map = {}
 
     for i, emb in enumerate(embeddings):
-        raw     = client.query_points("faces", query=emb, limit=10).points
-        matches = []
-        for r in raw:
-            score = r.score
-            # If this is the exact same source photo, set score to 1.0
-            if r.payload.get("file") == data.get("filename"):
-                score = 1.0
-            if score >= threshold:
-                matches.append({
-                    "file":       r.payload["file"],
-                    "face_index": r.payload["face"],
-                    "score":      round(score, 4),
-                    "thumbnail":  None
-                })
-        results.append({"face_index": i, "matches": matches})
+        raw = client.query_points("faces", query=emb, limit=10).points
 
-    return jsonify({"results": results})
+        for r in raw:
+            file = r.payload["file"]
+            score = r.score
+
+            if score < threshold:
+                continue
+
+            if file not in global_match_map or score > global_match_map[file]["score"]:
+                global_match_map[file] = {
+                    "file": file,
+                    "face_index": r.payload["face"],
+                    "score": round(score, 4),
+                    "thumbnail": None
+                }
+
+    matches = list(global_match_map.values())
+    matches.sort(key=lambda x: x["score"], reverse=True)
+
+    return jsonify({
+        "results": [{
+            "face_index": 0,
+            "matches": matches
+        }]
+    })
 
 
 @app.route("/api/gallery")
