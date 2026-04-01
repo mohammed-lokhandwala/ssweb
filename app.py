@@ -10,21 +10,14 @@ from flask import Flask, request, jsonify, render_template_string, abort
 
 app = Flask(__name__)
 
-# ── ML endpoint (HuggingFace Space) ──────────────────────────────────────────
 ML_API = "https://mohammedlokhandwala-ssweb.hf.space/extract"
 
-# ── Storage ───────────────────────────────────────────────────────────────────
 DB_PATH   = Path("./qdrant_db")
 LOCK_FILE = DB_PATH / ".lock"
 BACKUP    = Path("./faces_backup.json")
 
-
 _db = None
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  DB HELPERS
-# ═══════════════════════════════════════════════════════════════════════════════
 
 def _bust_lock():
     if LOCK_FILE.exists():
@@ -97,10 +90,6 @@ def ensure_collection():
 ensure_collection()
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#  ML HELPER
-# ═══════════════════════════════════════════════════════════════════════════════
-
 def get_embeddings_from_ml(img):
     _, buffer = cv2.imencode(".jpg", img)
     files = {"file": ("image.jpg", buffer.tobytes(), "image/jpeg")}
@@ -116,16 +105,6 @@ def decode_image(b64_str):
     arr = np.frombuffer(img_bytes, np.uint8)
     return cv2.imdecode(arr, cv2.IMREAD_COLOR)
 
-
-def require_admin():
-    key = request.args.get("key") or request.json.get("key", "") if request.is_json else request.args.get("key", "")
-    if key != ADMIN_KEY:
-        abort(403)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  HTML — USER FACING (Search + Gallery)
-# ═══════════════════════════════════════════════════════════════════════════════
 
 USER_HTML = r"""<!DOCTYPE html>
 <html lang="en">
@@ -163,8 +142,6 @@ USER_HTML = r"""<!DOCTYPE html>
   .panel{display:none;padding:40px 0}
   .panel.active{display:block;animation:fadeUp .35s ease}
   @keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
-
-  /* ── Drop zone ── */
   .drop-zone{border:1px dashed var(--border);border-radius:4px;padding:60px 40px;text-align:center;cursor:pointer;transition:all .25s;position:relative;overflow:hidden;background:var(--card)}
   .drop-zone::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse at 50% 0%,rgba(0,255,229,.05) 0%,transparent 70%);opacity:0;transition:opacity .3s}
   .drop-zone:hover,.drop-zone.dragover{border-color:var(--accent);background:rgba(0,255,229,.03)}
@@ -173,15 +150,11 @@ USER_HTML = r"""<!DOCTYPE html>
   .drop-icon{font-size:2.2rem;margin-bottom:14px;opacity:.4;display:block}
   .drop-label{font-family:'DM Mono',monospace;font-size:.75rem;letter-spacing:.1em;color:var(--muted);text-transform:uppercase}
   .drop-label strong{color:var(--accent);font-weight:500}
-
-  /* ── Preview ── */
   .preview-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px;margin-top:20px}
   .preview-item{position:relative;border-radius:3px;overflow:hidden;border:1px solid var(--border);aspect-ratio:1;background:var(--card)}
   .preview-item img{width:100%;height:100%;object-fit:cover;display:block}
   .preview-item .remove{position:absolute;top:4px;right:4px;width:20px;height:20px;background:rgba(255,60,110,.9);border:none;border-radius:2px;color:#fff;font-size:.7rem;cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .2s}
   .preview-item:hover .remove{opacity:1}
-
-  /* ── Buttons ── */
   .btn{display:inline-flex;align-items:center;gap:8px;font-family:'DM Mono',monospace;font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;padding:12px 28px;border-radius:3px;border:1px solid;cursor:pointer;transition:all .2s;position:relative;overflow:hidden;background:transparent}
   .btn::after{content:'';position:absolute;inset:0;background:currentColor;opacity:0;transition:opacity .2s}
   .btn:hover::after{opacity:.08}
@@ -189,8 +162,6 @@ USER_HTML = r"""<!DOCTYPE html>
   .btn-primary:hover{box-shadow:0 0 20px rgba(0,255,229,.25)}
   .btn-ghost{border-color:var(--border);color:var(--muted)}
   .btn:disabled{opacity:.35;cursor:not-allowed}
-
-  /* ── Results ── */
   .result-card{border:1px solid var(--border);border-radius:4px;overflow:hidden;margin-bottom:16px;background:var(--card);transition:border-color .2s}
   .result-card:hover{border-color:var(--accent3)}
   .result-header{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--border);background:rgba(0,0,0,.2)}
@@ -203,23 +174,20 @@ USER_HTML = r"""<!DOCTYPE html>
   .match-row{display:flex;align-items:center;gap:16px}
   .match-img-wrap{position:relative;flex-shrink:0}
   .match-thumb{width:52px;height:52px;border-radius:3px;object-fit:cover;border:1px solid var(--border)}
+  .match-thumb-placeholder{width:52px;height:52px;border-radius:3px;border:1px solid var(--border);background:var(--surface);display:flex;align-items:center;justify-content:center;font-family:'DM Mono',monospace;font-size:.45rem;color:var(--muted);letter-spacing:.06em}
   .match-score-badge{position:absolute;bottom:-6px;left:50%;transform:translateX(-50%);font-family:'DM Mono',monospace;font-size:.55rem;white-space:nowrap;padding:2px 6px;border-radius:20px;border:1px solid;background:var(--bg)}
   .match-info{flex:1}
   .match-file{font-family:'DM Mono',monospace;font-size:.72rem;color:var(--text)}
   .match-bar-wrap{margin-top:6px;height:3px;background:var(--border);border-radius:2px;overflow:hidden}
   .match-bar{height:100%;border-radius:2px;transition:width .8s cubic-bezier(.16,1,.3,1)}
   .score-high{color:var(--success);border-color:var(--success)} .score-high .match-bar{background:var(--success)}
-  .score-med{color:var(--warn);border-color:var(--warn)}   .score-med .match-bar{background:var(--warn)}
+  .score-med{color:var(--warn);border-color:var(--warn)} .score-med .match-bar{background:var(--warn)}
   .score-low{color:var(--accent2);border-color:var(--accent2)} .score-low .match-bar{background:var(--accent2)}
-
-  /* ── Slider ── */
   .slider-row{display:flex;align-items:center;gap:14px;margin-bottom:24px}
   .slider-label{font-family:'DM Mono',monospace;font-size:.68rem;letter-spacing:.08em;color:var(--muted);text-transform:uppercase;white-space:nowrap}
   input[type=range]{flex:1;-webkit-appearance:none;height:2px;background:var(--border);border-radius:2px;outline:none}
   input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent);cursor:pointer}
   .slider-val{font-family:'Bebas Neue',sans-serif;font-size:1.1rem;color:var(--accent);min-width:40px;text-align:right}
-
-  /* ── Gallery ── */
   .gallery-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-top:24px}
   .gallery-item{position:relative;border-radius:4px;overflow:hidden;border:2px solid var(--border);aspect-ratio:1;background:var(--card);cursor:pointer;transition:all .2s}
   .gallery-item:hover{border-color:var(--accent);transform:scale(1.02);box-shadow:0 0 16px rgba(0,255,229,.2)}
@@ -231,14 +199,16 @@ USER_HTML = r"""<!DOCTYPE html>
   .gallery-empty{font-family:'DM Mono',monospace;font-size:.72rem;color:var(--muted);text-align:center;padding:60px 0}
   .gallery-tip{font-family:'DM Mono',monospace;font-size:.65rem;color:var(--muted);margin-bottom:20px;letter-spacing:.06em}
   .gallery-tip strong{color:var(--accent)}
-
-  /* ── Stats bar ── */
+  /* Load More */
+  .load-more-wrap{text-align:center;margin-top:24px;padding-bottom:8px}
+  .btn-load-more{display:inline-flex;align-items:center;gap:8px;font-family:'DM Mono',monospace;font-size:.7rem;letter-spacing:.12em;text-transform:uppercase;padding:12px 32px;border-radius:3px;border:1px solid var(--accent3);color:var(--accent3);background:rgba(123,97,255,.06);cursor:pointer;transition:all .2s}
+  .btn-load-more:hover{box-shadow:0 0 16px rgba(123,97,255,.2);background:rgba(123,97,255,.12)}
+  .load-more-count{font-family:'DM Mono',monospace;font-size:.6rem;color:var(--muted);text-align:center;margin-top:8px;letter-spacing:.06em}
+  /* Stats */
   .stats-bar{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--border);border:1px solid var(--border);border-radius:4px;margin-bottom:32px;overflow:hidden}
   .stat{background:var(--card);padding:20px 24px}
   .stat-val{font-family:'Bebas Neue',sans-serif;font-size:2.4rem;line-height:1;color:var(--accent);text-shadow:0 0 20px rgba(0,255,229,.3)}
   .stat-key{font-family:'DM Mono',monospace;font-size:.6rem;letter-spacing:.12em;color:var(--muted);text-transform:uppercase;margin-top:4px}
-
-  /* ── Misc ── */
   .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
   .mt-md{margin-top:28px}
   .section-title{font-family:'DM Mono',monospace;font-size:.62rem;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin-bottom:16px;display:flex;align-items:center;gap:10px}
@@ -256,8 +226,6 @@ USER_HTML = r"""<!DOCTYPE html>
   .mode-btn.active{background:rgba(0,255,229,.08);color:var(--accent)}
   .mode-section{display:none}
   .mode-section.active{display:block}
-
-  /* ── Project info banner ── */
   .project-banner{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:28px 32px;margin:32px 0 0;position:relative;overflow:hidden}
   .project-banner::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--accent),var(--accent3),var(--accent2))}
   .pb-top{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;flex-wrap:wrap}
@@ -269,13 +237,6 @@ USER_HTML = r"""<!DOCTYPE html>
   .pb-chip a:hover{text-decoration:underline}
   .pb-desc{font-size:.82rem;color:var(--muted);line-height:1.7;margin-top:16px;max-width:780px}
   .pb-desc strong{color:var(--text)}
-  .pb-reqs{margin-top:20px;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
-  .pb-req{background:rgba(0,0,0,.3);border:1px solid var(--border);border-radius:4px;padding:12px 16px;display:flex;gap:10px;align-items:flex-start}
-  .pb-req-icon{color:var(--accent);font-size:.85rem;margin-top:1px;flex-shrink:0}
-  .pb-req-text{font-family:'DM Mono',monospace;font-size:.62rem;color:var(--muted);line-height:1.6}
-  .pb-req-text strong{color:var(--text);display:block;margin-bottom:2px}
-
-  /* ── Random demo ── */
   .demo-box{background:linear-gradient(135deg,rgba(0,255,229,.04),rgba(123,97,255,.04));border:1px solid var(--border);border-radius:6px;padding:20px 24px;margin-top:20px;display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap}
   .demo-left{flex:1}
   .demo-title{font-family:'DM Mono',monospace;font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin-bottom:4px}
@@ -283,8 +244,6 @@ USER_HTML = r"""<!DOCTYPE html>
   .btn-demo{display:inline-flex;align-items:center;gap:8px;font-family:'DM Mono',monospace;font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;padding:12px 24px;border-radius:3px;border:1px solid var(--accent3);color:var(--accent3);background:rgba(123,97,255,.08);cursor:pointer;transition:all .2s;white-space:nowrap}
   .btn-demo:hover{box-shadow:0 0 20px rgba(123,97,255,.25);background:rgba(123,97,255,.14)}
   .btn-demo:disabled{opacity:.4;cursor:not-allowed}
-  .demo-result-preview{display:none;margin-top:14px;padding:14px 16px;background:rgba(0,0,0,.3);border-radius:4px;border:1px solid var(--border);font-family:'DM Mono',monospace;font-size:.65rem;color:var(--muted);display:flex;align-items:center;gap:12px}
-  .demo-result-preview img{width:48px;height:48px;border-radius:3px;object-fit:cover;border:1px solid var(--border)}
 </style>
 </head>
 <body>
@@ -299,7 +258,6 @@ USER_HTML = r"""<!DOCTYPE html>
 </header>
 <div class="container">
 
-  <!-- ══ PROJECT INFO BANNER ══ -->
   <div class="project-banner">
     <div class="pb-top">
       <div>
@@ -314,13 +272,11 @@ USER_HTML = r"""<!DOCTYPE html>
     </div>
     <p class="pb-desc">
       We are given a pool of <strong>1,000 wedding photos</strong>. The goal is to build a system that, when provided with any single photo, can identify and retrieve all other photos in which the same person appears.
-      Each face in the dataset is processed using <strong>InsightFace</strong> to generate a unique numerical representation (embedding). These embeddings are stored in a <strong>Qdrant vector database</strong>.
-      For any query image, the system generates its embedding and performs a similarity search against the stored vectors to find the closest matches.
-      The solution works without manual tagging or labeling — relying entirely on facial features and vector similarity.
+      Each face is processed using <strong>InsightFace</strong> to generate a unique numerical embedding stored in a <strong>Qdrant vector database</strong>.
+      For any query image, the system finds the closest matches using cosine similarity — no manual tagging required.
     </p>
   </div>
 
-  <!-- ══ RANDOM DEMO ══ -->
   <div class="demo-box">
     <div class="demo-left">
       <div class="demo-title">Try a Quick Demo</div>
@@ -341,22 +297,21 @@ USER_HTML = r"""<!DOCTYPE html>
     <div class="tab" onclick="switchTab('gallery')">GALLERY <span class="badge" id="gallery-badge">—</span></div>
   </div>
 
-  <!-- ══ SEARCH PANEL ══ -->
+  <!-- SEARCH PANEL -->
   <div class="panel active" id="panel-search">
     <p class="section-title">Find yourself in the wedding photos</p>
-
     <div class="search-mode-toggle">
       <button class="mode-btn active" onclick="setMode('gallery')">Search from Gallery</button>
       <button class="mode-btn" onclick="setMode('upload')">Upload a Photo</button>
     </div>
-
-    <!-- Gallery pick mode — now default/active -->
     <div class="mode-section active" id="mode-gallery">
       <p class="gallery-tip">Click any photo below to use it as your search query. <strong>Selected photos will be highlighted.</strong></p>
       <div class="gallery-grid" id="pick-grid"><div class="gallery-empty">Loading gallery…</div></div>
+      <div class="load-more-wrap" id="pick-load-more-wrap" style="display:none">
+        <button class="btn-load-more" onclick="loadMorePick()">↓ Load More Photos</button>
+        <div class="load-more-count" id="pick-load-more-count"></div>
+      </div>
     </div>
-
-    <!-- Upload mode -->
     <div class="mode-section" id="mode-upload">
       <div class="drop-zone" id="search-drop">
         <input type="file" id="search-input" accept="image/*" multiple onchange="previewFiles(this,'search-preview')" onclick="event.stopPropagation()"/>
@@ -366,7 +321,6 @@ USER_HTML = r"""<!DOCTYPE html>
       </div>
       <div class="preview-grid" id="search-preview"></div>
     </div>
-
     <div class="mt-md row">
       <div class="slider-row" style="flex:1;margin:0">
         <span class="slider-label">Min Similarity</span>
@@ -381,7 +335,7 @@ USER_HTML = r"""<!DOCTYPE html>
     <div id="search-results" class="mt-md"></div>
   </div>
 
-  <!-- ══ GALLERY PANEL ══ -->
+  <!-- GALLERY PANEL -->
   <div class="panel" id="panel-gallery">
     <p class="section-title">All indexed wedding photos</p>
     <div class="stats-bar">
@@ -390,15 +344,25 @@ USER_HTML = r"""<!DOCTYPE html>
       <div class="stat"><div class="stat-val">COS</div><div class="stat-key">Distance Metric</div></div>
     </div>
     <div class="gallery-grid" id="gallery-grid"><div class="gallery-empty">Loading…</div></div>
+    <div class="load-more-wrap" id="gallery-load-more-wrap" style="display:none">
+      <button class="btn-load-more" onclick="loadMoreGallery()">↓ Load More Photos</button>
+      <div class="load-more-count" id="gallery-load-more-count"></div>
+    </div>
   </div>
 </div>
 
 <script>
-// ── State ─────────────────────────────────────────────────────────────────────
-let searchFiles   = [];
-let pickedFile    = null;
-let currentMode   = 'gallery';
+const PAGE_SIZE = 30;
+let searchFiles  = [];
+let pickedFile   = null;
+let currentMode  = 'gallery';
 let galleryLoaded = false;
+
+// All photos cache for pagination
+let allPhotos       = [];
+let pickShownCount  = 0;
+let galleryAllPhotos = [];
+let galleryShown    = 0;
 
 // ── Random Demo ───────────────────────────────────────────────────────────────
 async function runRandomDemo() {
@@ -409,53 +373,48 @@ async function runRandomDemo() {
     const res  = await fetch('/api/gallery');
     const data = await res.json();
     if(!data.photos || !data.photos.length) {
-      alert('No photos indexed yet. Ask the admin to index some photos first.');
-      btn.disabled = false; btn.innerHTML = '⚡ Pick Random &amp; Search';
+      alert('No photos indexed yet.');
+      btn.disabled = false; btn.textContent = 'Pick Random and Search';
       return;
     }
-    // Pick a random photo
     const photo = data.photos[Math.floor(Math.random() * data.photos.length)];
-    btn.textContent = `⏳ Searching…`;
+    btn.textContent = '⏳ Searching…';
 
-    // Show mini preview of picked photo
-    const pickedEl = document.getElementById('demo-picked');
     document.getElementById('demo-picked-img').src = `data:image/jpeg;base64,${photo.thumbnail}`;
     document.getElementById('demo-picked-name').textContent = photo.file;
-    pickedEl.style.display = 'flex';
+    document.getElementById('demo-picked').style.display = 'flex';
 
-    // Convert thumbnail to File and search
-    const byteStr = atob(photo.thumbnail);
-    const ab = new ArrayBuffer(byteStr.length);
-    const ia = new Uint8Array(ab);
-    for(let i=0;i<byteStr.length;i++) ia[i]=byteStr.charCodeAt(i);
-    const file = new File([ab], photo.file, {type:'image/jpeg'});
-    const b64  = photo.thumbnail;
-
-    // Switch to search tab and show results there
     switchTab('search');
     document.getElementById('search-results').innerHTML = '';
     document.getElementById('search-progress').classList.add('show');
     document.getElementById('btn-search').disabled = true;
 
-    const sres  = await fetch('/api/search', {
+    const sres = await fetch('/api/search', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({
         filename: photo.file,
-        image: b64,
+        image: photo.thumbnail,
         threshold: parseInt(document.getElementById('threshold-slider').value) / 100
       })
     });
     const sdata = await sres.json();
-    renderResult(sdata, file, `data:image/jpeg;base64,${b64}`);
+
+    const bytes = Uint8Array.from(atob(photo.thumbnail), c=>c.charCodeAt(0));
+    const file  = new File([bytes], photo.file, {type:'image/jpeg'});
+    renderResult(sdata, file, `data:image/jpeg;base64,${photo.thumbnail}`);
 
     document.getElementById('search-progress').classList.remove('show');
     document.getElementById('btn-search').disabled = false;
+
+    // FIX 3: scroll to results
+    setTimeout(()=>document.getElementById('search-results').scrollIntoView({behavior:'smooth',block:'start'}), 200);
+
   } catch(e) {
     alert('Demo failed: ' + e.message);
   }
   btn.disabled = false;
-  btn.innerHTML = 'Pick Random and Search';
+  btn.textContent = 'Pick Random and Search';
 }
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
@@ -468,7 +427,6 @@ function switchTab(tab) {
   if(tab==='gallery') loadGallery();
 }
 
-// ── Search mode toggle ────────────────────────────────────────────────────────
 function setMode(mode) {
   currentMode = mode;
   document.querySelectorAll('.mode-btn').forEach((b,i)=>{
@@ -480,7 +438,7 @@ function setMode(mode) {
   if(mode==='gallery' && !galleryLoaded) loadPickGrid();
 }
 
-// ── File preview (upload mode) ────────────────────────────────────────────────
+// ── File preview ──────────────────────────────────────────────────────────────
 function previewFiles(input, gridId) {
   const files = Array.from(input.files);
   const grid  = document.getElementById(gridId);
@@ -498,13 +456,9 @@ function previewFiles(input, gridId) {
     reader.readAsDataURL(f);
   });
 }
+function removePreview(btn,name){btn.closest('.preview-item').remove();searchFiles=searchFiles.filter(f=>f.name!==name);}
 
-function removePreview(btn, name) {
-  btn.closest('.preview-item').remove();
-  searchFiles = searchFiles.filter(f=>f.name!==name);
-}
-
-// ── Gallery picker (search from gallery) ─────────────────────────────────────
+// ── Pick grid with pagination (FIX 2) ────────────────────────────────────────
 async function loadPickGrid() {
   galleryLoaded = true;
   const grid = document.getElementById('pick-grid');
@@ -516,58 +470,90 @@ async function loadPickGrid() {
       grid.innerHTML = '<div class="gallery-empty">No photos indexed yet.</div>';
       return;
     }
+    allPhotos = data.photos;
+    pickShownCount = 0;
     grid.innerHTML = '';
-    data.photos.forEach(p => {
-      const item = document.createElement('div');
-      item.className = 'gallery-item';
-      item.dataset.filename = p.file;
-      item.innerHTML = `<img src="data:image/jpeg;base64,${p.thumbnail}" loading="lazy"/><div class="g-label">${p.file}</div><div class="g-check">✓</div>`;
-      item.onclick = () => togglePick(item, p);
-      grid.appendChild(item);
-    });
+    renderPickBatch();
   } catch(e) {
     grid.innerHTML = '<div class="gallery-empty">Failed to load gallery.</div>';
   }
 }
 
+function renderPickBatch() {
+  const grid  = document.getElementById('pick-grid');
+  const batch = allPhotos.slice(pickShownCount, pickShownCount + PAGE_SIZE);
+  batch.forEach(p => {
+    const item = document.createElement('div');
+    item.className = 'gallery-item';
+    item.dataset.filename = p.file;
+    item.innerHTML = `<img src="data:image/jpeg;base64,${p.thumbnail}" loading="lazy"/><div class="g-label">${p.file}</div><div class="g-check">✓</div>`;
+    item.onclick = () => togglePick(item, p);
+    grid.appendChild(item);
+  });
+  pickShownCount += batch.length;
+  const remaining = allPhotos.length - pickShownCount;
+  const wrap = document.getElementById('pick-load-more-wrap');
+  if(remaining > 0) {
+    wrap.style.display = 'block';
+    document.getElementById('pick-load-more-count').textContent =
+      `Showing ${pickShownCount} of ${allPhotos.length} — ${remaining} more`;
+  } else {
+    wrap.style.display = 'none';
+  }
+}
+function loadMorePick() { renderPickBatch(); }
+
 function togglePick(item, photo) {
-  // Single-select: one photo at a time for search
   document.querySelectorAll('#pick-grid .gallery-item').forEach(el=>el.classList.remove('selected'));
   item.classList.add('selected');
-  // Convert base64 thumbnail to a File object for search
-  const byteStr = atob(photo.thumbnail);
-  const ab = new ArrayBuffer(byteStr.length);
-  const ia = new Uint8Array(ab);
-  for(let i=0;i<byteStr.length;i++) ia[i]=byteStr.charCodeAt(i);
-  pickedFile = new File([ab], photo.file, {type:'image/jpeg'});
+  const bytes = Uint8Array.from(atob(photo.thumbnail), c=>c.charCodeAt(0));
+  pickedFile = new File([bytes], photo.file, {type:'image/jpeg'});
 }
 
-// ── Gallery panel ─────────────────────────────────────────────────────────────
+// ── Gallery panel with pagination (FIX 2) ────────────────────────────────────
 async function loadGallery() {
   const grid = document.getElementById('gallery-grid');
   grid.innerHTML = '<div class="gallery-empty">Loading…</div>';
   try {
     const res  = await fetch('/api/gallery');
     const data = await res.json();
-    const total = data.total_faces ?? 0;
-    document.getElementById('stat-total').textContent  = total;
+    document.getElementById('stat-total').textContent  = data.total_faces ?? 0;
     document.getElementById('stat-photos').textContent = data.photos ? data.photos.length : 0;
     document.getElementById('gallery-badge').textContent = data.photos ? data.photos.length : 0;
     if(!data.photos || !data.photos.length) {
       grid.innerHTML = '<div class="gallery-empty">No photos indexed yet.</div>';
       return;
     }
+    galleryAllPhotos = data.photos;
+    galleryShown = 0;
     grid.innerHTML = '';
-    data.photos.forEach(p => {
-      const item = document.createElement('div');
-      item.className = 'gallery-item';
-      item.innerHTML = `<img src="data:image/jpeg;base64,${p.thumbnail}" loading="lazy"/><div class="g-label">${p.file}</div>`;
-      grid.appendChild(item);
-    });
+    renderGalleryBatch();
   } catch(e) {
     grid.innerHTML = '<div class="gallery-empty">Failed to load gallery.</div>';
   }
 }
+
+function renderGalleryBatch() {
+  const grid  = document.getElementById('gallery-grid');
+  const batch = galleryAllPhotos.slice(galleryShown, galleryShown + PAGE_SIZE);
+  batch.forEach(p => {
+    const item = document.createElement('div');
+    item.className = 'gallery-item';
+    item.innerHTML = `<img src="data:image/jpeg;base64,${p.thumbnail}" loading="lazy"/><div class="g-label">${p.file}</div>`;
+    grid.appendChild(item);
+  });
+  galleryShown += batch.length;
+  const remaining = galleryAllPhotos.length - galleryShown;
+  const wrap = document.getElementById('gallery-load-more-wrap');
+  if(remaining > 0) {
+    wrap.style.display = 'block';
+    document.getElementById('gallery-load-more-count').textContent =
+      `Showing ${galleryShown} of ${galleryAllPhotos.length} — ${remaining} more`;
+  } else {
+    wrap.style.display = 'none';
+  }
+}
+function loadMoreGallery() { renderGalleryBatch(); }
 
 // ── Search ────────────────────────────────────────────────────────────────────
 async function toBase64(file) {
@@ -581,14 +567,12 @@ async function toBase64(file) {
 async function runSearch() {
   const threshold = parseInt(document.getElementById('threshold-slider').value) / 100;
   let filesToSearch = [];
-
   if(currentMode==='upload') {
     filesToSearch = searchFiles;
   } else {
     if(!pickedFile) { alert('Please select a photo from the gallery first.'); return; }
     filesToSearch = [pickedFile];
   }
-
   if(!filesToSearch.length) { alert('Please select or upload a photo to search.'); return; }
 
   document.getElementById('search-progress').classList.add('show');
@@ -596,7 +580,7 @@ async function runSearch() {
   document.getElementById('search-results').innerHTML = '';
 
   for(const file of filesToSearch) {
-    const b64 = await toBase64(file);
+    const b64  = await toBase64(file);
     const res  = await fetch('/api/search', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
@@ -608,14 +592,14 @@ async function runSearch() {
 
   document.getElementById('search-progress').classList.remove('show');
   document.getElementById('btn-search').disabled = false;
+
+  // FIX 3: Scroll to results
+  setTimeout(()=>document.getElementById('search-results').scrollIntoView({behavior:'smooth',block:'start'}), 200);
 }
 
-function scoreClass(s) {
-  if(s>=.8) return 'score-high';
-  if(s>=.6) return 'score-med';
-  return 'score-low';
-}
+function scoreClass(s){if(s>=.8)return'score-high';if(s>=.6)return'score-med';return'score-low';}
 
+// ── Render results (FIX 1: thumbnail from API payload) ───────────────────────
 function renderResult(data, file, previewSrc) {
   const wrap = document.getElementById('search-results');
   const card = document.createElement('div');
@@ -632,12 +616,13 @@ function renderResult(data, file, previewSrc) {
       } else {
         faceResult.matches.forEach(m => {
           const sc  = scoreClass(m.score);
-          const pct = Math.round(m.score*100);
-          const thumb = m.thumbnail
-            ? `<img class="match-thumb" src="data:image/jpeg;base64,${m.thumbnail}"/>`
-            : `<div class="match-thumb" style="background:var(--border)"></div>`;
+          const pct = Math.round(m.score * 100);
+          // FIX 1: use thumbnail from API response, fallback to placeholder
+          const thumbHtml = m.thumbnail
+            ? `<img class="match-thumb" src="data:image/jpeg;base64,${m.thumbnail}" loading="lazy"/>`
+            : `<div class="match-thumb-placeholder">NO IMG</div>`;
           matchesHtml += `<div class="match-row">
-            <div class="match-img-wrap">${thumb}<span class="match-score-badge ${sc}">${pct}%</span></div>
+            <div class="match-img-wrap">${thumbHtml}<span class="match-score-badge ${sc}">${pct}%</span></div>
             <div class="match-info">
               <div class="match-file">${m.file} <span style="color:var(--muted);font-size:.62rem;">· face #${m.face_index}</span></div>
               <div class="match-bar-wrap ${sc}"><div class="match-bar" style="width:${pct}%"></div></div>
@@ -660,7 +645,7 @@ function renderResult(data, file, previewSrc) {
 
 // ── Drag & drop ───────────────────────────────────────────────────────────────
 const dropEl = document.getElementById('search-drop');
-dropEl.addEventListener('click', ()=> document.getElementById('search-input').click());
+dropEl.addEventListener('click', ()=>document.getElementById('search-input').click());
 dropEl.addEventListener('dragover', e=>{e.preventDefault();dropEl.classList.add('dragover')});
 dropEl.addEventListener('dragleave', ()=>dropEl.classList.remove('dragover'));
 dropEl.addEventListener('drop', e=>{
@@ -671,10 +656,8 @@ dropEl.addEventListener('drop', e=>{
   previewFiles(document.getElementById('search-input'),'search-preview');
 });
 
-// Load gallery on init since it's the default mode
+// Init
 loadPickGrid();
-
-// Init badge
 fetch('/api/gallery').then(r=>r.json()).then(d=>{
   document.getElementById('gallery-badge').textContent = d.photos?d.photos.length:0;
 }).catch(()=>{});
@@ -683,10 +666,6 @@ fetch('/api/gallery').then(r=>r.json()).then(d=>{
 </html>
 """
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  HTML — ADMIN PAGE  (/admin?key=...)
-# ═══════════════════════════════════════════════════════════════════════════════
 
 ADMIN_HTML = r"""<!DOCTYPE html>
 <html lang="en">
@@ -698,62 +677,44 @@ ADMIN_HTML = r"""<!DOCTYPE html>
 <style>
   :root{--bg:#080a0f;--card:#111820;--border:#1e2a38;--accent:#00ffe5;--accent2:#ff3c6e;--accent3:#7b61ff;--text:#e8edf3;--muted:#4a5a6a;--success:#00e87a}
   *{box-sizing:border-box;margin:0;padding:0}
-  body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min-height:100vh;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min-height:100vh}
   body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(rgba(0,255,229,.03) 1px,transparent 1px),linear-gradient(90deg,rgba(0,255,229,.03) 1px,transparent 1px);background-size:40px 40px;pointer-events:none;z-index:0}
-
-  /* ── Header ── */
   header{border-bottom:1px solid var(--border);padding:18px 32px;background:rgba(8,10,15,.95);backdrop-filter:blur(14px);display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100}
   .brand{font-family:'Bebas Neue',sans-serif;font-size:1.4rem;letter-spacing:.14em;color:var(--accent2)}
   .brand span{color:var(--accent)}
   .admin-badge{font-family:'DM Mono',monospace;font-size:.6rem;letter-spacing:.14em;padding:4px 10px;border-radius:20px;border:1px solid var(--accent2);color:var(--accent2)}
-
-  /* ── Layout ── */
   .page{max-width:1200px;margin:0 auto;padding:32px;position:relative;z-index:1}
   .section-title{font-family:'DM Mono',monospace;font-size:.62rem;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin-bottom:16px;display:flex;align-items:center;gap:10px}
   .section-title::after{content:'';flex:1;height:1px;background:var(--border)}
   .card{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:24px;margin-bottom:28px}
-
-  /* ── Drop zone ── */
   .drop-zone{border:1px dashed var(--border);border-radius:4px;padding:40px 30px;text-align:center;cursor:pointer;position:relative;background:rgba(0,0,0,.2);transition:all .2s}
   .drop-zone input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
   .drop-zone:hover{border-color:var(--accent);background:rgba(0,255,229,.03)}
   .drop-label{font-family:'DM Mono',monospace;font-size:.72rem;color:var(--muted)}
   .drop-label strong{color:var(--accent)}
-
-  /* ── Preview (upload queue) ── */
   .preview-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:8px;margin:16px 0}
   .preview-item{position:relative;aspect-ratio:1;border-radius:3px;overflow:hidden;border:1px solid var(--border)}
   .preview-item img{width:100%;height:100%;object-fit:cover}
-
-  /* ── Buttons ── */
   .btn{font-family:'DM Mono',monospace;font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;padding:10px 22px;border-radius:3px;border:1px solid;cursor:pointer;background:transparent;transition:all .2s}
   .btn-primary{border-color:var(--accent);color:var(--accent)}
-  .btn-primary:hover{box-shadow:0 0 16px rgba(0,255,229,.2)}
   .btn-danger{border-color:var(--accent2);color:var(--accent2)}
   .btn-ghost{border-color:var(--border);color:var(--muted)}
   .btn:disabled{opacity:.35;cursor:not-allowed}
   .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:16px}
-
-  /* ── Terminal log ── */
   .terminal{background:#06090d;border:1px solid var(--border);border-radius:4px;padding:16px;font-family:'DM Mono',monospace;font-size:.7rem;line-height:1.8;max-height:220px;overflow-y:auto;margin-top:16px}
   .terminal:empty::before{content:'> awaiting input…';color:var(--muted)}
   .log-line{display:block}
-  .ok{color:var(--success)} .err{color:var(--accent2)} .info{color:var(--accent)} .dim{color:var(--muted)}
+  .ok{color:var(--success)}.err{color:var(--accent2)}.info{color:var(--accent)}.dim{color:var(--muted)}
   .ts{color:var(--muted);margin-right:8px}
-
-  /* ── Progress ── */
   .progress-wrap{height:2px;background:var(--border);border-radius:2px;overflow:hidden;margin-top:12px;display:none}
   .progress-wrap.show{display:block}
   .progress-bar{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent3));animation:indeterminate 1.2s infinite ease-in-out;width:40%}
   @keyframes indeterminate{0%{transform:translateX(-100%)}100%{transform:translateX(350%)}}
-
-  /* ── Gallery manager ── */
   .gallery-stats{display:flex;gap:24px;margin-bottom:20px}
   .gstat{font-family:'DM Mono',monospace;font-size:.65rem;color:var(--muted)}
   .gstat strong{font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--accent);display:block;line-height:1}
-
   .mgmt-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
-  .mgmt-item{position:relative;border-radius:4px;overflow:hidden;border:2px solid var(--border);aspect-ratio:1;background:var(--card);transition:border-color .2s;group}
+  .mgmt-item{position:relative;border-radius:4px;overflow:hidden;border:2px solid var(--border);aspect-ratio:1;background:var(--card);transition:border-color .2s}
   .mgmt-item:hover{border-color:var(--accent2)}
   .mgmt-item img{width:100%;height:100%;object-fit:cover;display:block}
   .mgmt-item .m-label{position:absolute;bottom:0;left:0;right:0;background:rgba(8,10,15,.9);font-family:'DM Mono',monospace;font-size:.5rem;color:var(--muted);padding:5px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -762,10 +723,7 @@ ADMIN_HTML = r"""<!DOCTYPE html>
   .mgmt-item:hover .m-del{opacity:1}
   .mgmt-item.deleting{opacity:.4;pointer-events:none}
   .mgmt-empty{font-family:'DM Mono',monospace;font-size:.72rem;color:var(--muted);text-align:center;padding:50px 0;grid-column:1/-1}
-
-  ::-webkit-scrollbar{width:4px}
-  ::-webkit-scrollbar-track{background:transparent}
-  ::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+  ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
 </style>
 </head>
 <body>
@@ -774,8 +732,6 @@ ADMIN_HTML = r"""<!DOCTYPE html>
   <div class="admin-badge">⬡ ADMIN PANEL</div>
 </header>
 <div class="page">
-
-  <!-- ══ INDEX NEW PHOTOS ══ -->
   <div class="card">
     <p class="section-title">Index new photos</p>
     <div class="drop-zone" onclick="document.getElementById('admin-input').click()">
@@ -786,13 +742,11 @@ ADMIN_HTML = r"""<!DOCTYPE html>
     <div class="preview-grid" id="admin-preview"></div>
     <div class="row">
       <button class="btn btn-primary" onclick="runIndex()" id="btn-index">⬡ INDEX FACES</button>
-      <button class="btn btn-danger"  onclick="clearDB()">✕ CLEAR ENTIRE DB</button>
+      <button class="btn btn-danger" onclick="clearDB()">✕ CLEAR ENTIRE DB</button>
     </div>
     <div class="progress-wrap" id="admin-progress"><div class="progress-bar"></div></div>
     <div class="terminal" id="admin-log"></div>
   </div>
-
-  <!-- ══ GALLERY MANAGER ══ -->
   <div class="card">
     <p class="section-title">Manage indexed photos</p>
     <div class="gallery-stats">
@@ -802,150 +756,73 @@ ADMIN_HTML = r"""<!DOCTYPE html>
     <div class="row" style="margin-top:0;margin-bottom:20px">
       <button class="btn btn-ghost" onclick="loadGallery()">↻ Refresh</button>
     </div>
-    <div class="mgmt-grid" id="mgmt-grid">
-      <div class="mgmt-empty">Loading…</div>
-    </div>
+    <div class="mgmt-grid" id="mgmt-grid"><div class="mgmt-empty">Loading…</div></div>
   </div>
-
 </div>
 <script>
-let adminFiles = [];
-
-// ── Upload preview ────────────────────────────────────────────────────────────
-function previewFiles(input) {
-  const files = Array.from(input.files);
-  const grid  = document.getElementById('admin-preview');
-  grid.innerHTML = '';
-  adminFiles = [];
-  files.forEach(f => {
-    adminFiles.push(f);
-    const reader = new FileReader();
-    reader.onload = e => {
-      const item = document.createElement('div');
-      item.className = 'preview-item';
-      item.innerHTML = `<img src="${e.target.result}"/>`;
-      grid.appendChild(item);
-    };
-    reader.readAsDataURL(f);
-  });
+let adminFiles=[];
+function previewFiles(input){
+  const files=Array.from(input.files);const grid=document.getElementById('admin-preview');
+  grid.innerHTML='';adminFiles=[];
+  files.forEach(f=>{adminFiles.push(f);const r=new FileReader();
+    r.onload=e=>{const i=document.createElement('div');i.className='preview-item';
+      i.innerHTML=`<img src="${e.target.result}"/>`;grid.appendChild(i);};r.readAsDataURL(f);});
 }
-
-// ── Logging ───────────────────────────────────────────────────────────────────
-function ts() { return new Date().toTimeString().slice(0,8); }
-function log(msg, cls='info') {
-  const t = document.getElementById('admin-log');
-  const line = document.createElement('span');
-  line.className = `log-line ${cls}`;
-  line.innerHTML = `<span class="ts">[${ts()}]</span>${msg}`;
-  t.appendChild(line);
-  t.scrollTop = t.scrollHeight;
+function ts(){return new Date().toTimeString().slice(0,8);}
+function log(msg,cls='info'){
+  const t=document.getElementById('admin-log');const l=document.createElement('span');
+  l.className=`log-line ${cls}`;l.innerHTML=`<span class="ts">[${ts()}]</span>${msg}`;
+  t.appendChild(l);t.scrollTop=t.scrollHeight;
 }
-
-// ── Base64 helper ─────────────────────────────────────────────────────────────
-async function toBase64(file) {
-  return new Promise(r => {
-    const reader = new FileReader();
-    reader.onload = e => r(e.target.result.split(',')[1]);
-    reader.readAsDataURL(file);
-  });
-}
-
-// ── Index ─────────────────────────────────────────────────────────────────────
-async function runIndex() {
-  if(!adminFiles.length) { log('No files selected.','err'); return; }
+async function toBase64(file){return new Promise(r=>{const rd=new FileReader();rd.onload=e=>r(e.target.result.split(',')[1]);rd.readAsDataURL(file);});}
+async function runIndex(){
+  if(!adminFiles.length){log('No files selected.','err');return;}
   document.getElementById('admin-progress').classList.add('show');
-  document.getElementById('btn-index').disabled = true;
-  log(`Starting indexing of ${adminFiles.length} image(s)…`, 'dim');
-
-  for(const file of adminFiles) {
-    const b64 = await toBase64(file);
-    const res  = await fetch('/api/index', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({filename: file.name, image: b64})
-    });
-    const data = await res.json();
-    if(data.error) log(`✕ ${file.name}: ${data.error}`, 'err');
-    else           log(`✓ ${file.name} → ${data.faces} face(s) indexed`, 'ok');
+  document.getElementById('btn-index').disabled=true;
+  log(`Starting indexing of ${adminFiles.length} image(s)…`,'dim');
+  for(const file of adminFiles){
+    const b64=await toBase64(file);
+    const res=await fetch('/api/index',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({filename:file.name,image:b64})});
+    const data=await res.json();
+    if(data.error)log(`✕ ${file.name}: ${data.error}`,'err');
+    else log(`✓ ${file.name} → ${data.faces} face(s) indexed`,'ok');
   }
-
   document.getElementById('admin-progress').classList.remove('show');
-  document.getElementById('btn-index').disabled = false;
-  log('Done.', 'dim');
-  loadGallery(); // refresh gallery after indexing
+  document.getElementById('btn-index').disabled=false;
+  log('Done.','dim');loadGallery();
 }
-
-// ── Clear all ─────────────────────────────────────────────────────────────────
-async function clearDB() {
-  if(!confirm('Delete ALL indexed faces? This cannot be undone.')) return;
-  const res  = await fetch('/api/clear', {method:'POST'});
-  const data = await res.json();
-  log(data.message || 'Cleared.', 'err');
-  loadGallery();
+async function clearDB(){
+  if(!confirm('Delete ALL indexed faces?'))return;
+  const res=await fetch('/api/clear',{method:'POST'});const data=await res.json();
+  log(data.message||'Cleared.','err');loadGallery();
 }
-
-// ── Delete single photo ───────────────────────────────────────────────────────
-async function deletePhoto(filename, itemEl) {
-  if(!confirm(`Delete "${filename}" and all its faces from the database?`)) return;
+async function deletePhoto(filename,itemEl){
+  if(!confirm(`Delete "${filename}"?`))return;
   itemEl.classList.add('deleting');
-  const res  = await fetch('/api/delete', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({filename})
-  });
-  const data = await res.json();
-  if(data.error) {
-    log(`✕ Could not delete ${filename}: ${data.error}`, 'err');
-    itemEl.classList.remove('deleting');
-  } else {
-    log(`✓ Deleted "${filename}" (${data.deleted} record(s) removed)`, 'ok');
-    itemEl.remove();
-    // Update counts
-    const cur = parseInt(document.getElementById('g-photos').textContent) || 0;
-    document.getElementById('g-photos').textContent = Math.max(0, cur - 1);
-    const curFaces = parseInt(document.getElementById('g-total').textContent) || 0;
-    document.getElementById('g-total').textContent = Math.max(0, curFaces - (data.deleted || 0));
-  }
+  const res=await fetch('/api/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({filename})});
+  const data=await res.json();
+  if(data.error){log(`✕ ${data.error}`,'err');itemEl.classList.remove('deleting');}
+  else{log(`✓ Deleted "${filename}" (${data.deleted} records)`,'ok');itemEl.remove();
+    document.getElementById('g-photos').textContent=Math.max(0,(parseInt(document.getElementById('g-photos').textContent)||0)-1);
+    document.getElementById('g-total').textContent=Math.max(0,(parseInt(document.getElementById('g-total').textContent)||0)-(data.deleted||0));}
 }
-
-// ── Load gallery ──────────────────────────────────────────────────────────────
-async function loadGallery() {
-  const grid = document.getElementById('mgmt-grid');
-  grid.innerHTML = '<div class="mgmt-empty">Loading…</div>';
-  try {
-    const res  = await fetch('/api/gallery');
-    const data = await res.json();
-    document.getElementById('g-total').textContent  = data.total_faces ?? 0;
-    document.getElementById('g-photos').textContent = data.photos ? data.photos.length : 0;
-
-    if(!data.photos || !data.photos.length) {
-      grid.innerHTML = '<div class="mgmt-empty">No photos indexed yet.</div>';
-      return;
-    }
-
-    grid.innerHTML = '';
-    data.photos.forEach(p => {
-      const item = document.createElement('div');
-      item.className = 'mgmt-item';
-      const thumb = p.thumbnail
-        ? `<img src="data:image/jpeg;base64,${p.thumbnail}" loading="lazy"/>`
-        : `<div style="width:100%;height:100%;background:var(--border);display:flex;align-items:center;justify-content:center;font-family:DM Mono,monospace;font-size:.6rem;color:var(--muted)">NO PREVIEW</div>`;
-      item.innerHTML = `
-        ${thumb}
-        <div class="m-faces">${p.face_count ?? '?'} face${p.face_count===1?'':'s'}</div>
-        <div class="m-label">${p.file}</div>
-        <button class="m-del" title="Delete this photo">✕</button>`;
-      item.querySelector('.m-del').onclick = (e) => {
-        e.stopPropagation();
-        deletePhoto(p.file, item);
-      };
-      grid.appendChild(item);
-    });
-  } catch(e) {
-    grid.innerHTML = '<div class="mgmt-empty">Failed to load gallery.</div>';
-  }
+async function loadGallery(){
+  const grid=document.getElementById('mgmt-grid');grid.innerHTML='<div class="mgmt-empty">Loading…</div>';
+  try{
+    const res=await fetch('/api/gallery');const data=await res.json();
+    document.getElementById('g-total').textContent=data.total_faces??0;
+    document.getElementById('g-photos').textContent=data.photos?data.photos.length:0;
+    if(!data.photos||!data.photos.length){grid.innerHTML='<div class="mgmt-empty">No photos indexed yet.</div>';return;}
+    grid.innerHTML='';
+    data.photos.forEach(p=>{
+      const item=document.createElement('div');item.className='mgmt-item';
+      const thumb=p.thumbnail?`<img src="data:image/jpeg;base64,${p.thumbnail}" loading="lazy"/>`
+        :`<div style="width:100%;height:100%;background:var(--border);display:flex;align-items:center;justify-content:center;font-size:.6rem;color:var(--muted)">NO IMG</div>`;
+      item.innerHTML=`${thumb}<div class="m-faces">${p.face_count??'?'} face${p.face_count===1?'':'s'}</div><div class="m-label">${p.file}</div><button class="m-del">✕</button>`;
+      item.querySelector('.m-del').onclick=e=>{e.stopPropagation();deletePhoto(p.file,item);};
+      grid.appendChild(item);});
+  }catch(e){grid.innerHTML='<div class="mgmt-empty">Failed to load gallery.</div>';}
 }
-
 loadGallery();
 </script>
 </body>
@@ -953,26 +830,18 @@ loadGallery();
 """
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#  ROUTES
-# ═══════════════════════════════════════════════════════════════════════════════
-
 @app.route("/health")
 def health():
     return "ok", 200
-
 
 @app.route("/")
 def index():
     return render_template_string(USER_HTML)
 
-
 @app.route("/admin")
 def admin():
     return render_template_string(ADMIN_HTML)
 
-
-# ── Public: search ────────────────────────────────────────────────────────────
 
 @app.route("/api/search", methods=["POST"])
 def api_search():
@@ -990,103 +859,69 @@ def api_search():
         return jsonify({"error": ml_res["error"]})
 
     embeddings = ml_res.get("faces", [])
-
     global_match_map = {}
 
     for i, emb in enumerate(embeddings):
         raw = client.query_points("faces", query=emb, limit=10).points
-
         for r in raw:
             file = r.payload["file"]
             score = r.score
-
             if score < threshold:
                 continue
-
             if file not in global_match_map or score > global_match_map[file]["score"]:
                 global_match_map[file] = {
                     "file": file,
                     "face_index": r.payload["face"],
                     "score": round(score, 4),
-                    "thumbnail": None
+                    # FIX 1: include stored thumbnail in search results
+                    "thumbnail": r.payload.get("thumbnail", None)
                 }
 
-    matches = list(global_match_map.values())
-    matches.sort(key=lambda x: x["score"], reverse=True)
-
-    return jsonify({
-        "results": [{
-            "face_index": 0,
-            "matches": matches
-        }]
-    })
+    matches = sorted(global_match_map.values(), key=lambda x: x["score"], reverse=True)
+    return jsonify({"results": [{"face_index": 0, "matches": matches}]})
 
 
 @app.route("/api/gallery")
 def api_gallery():
-    """Returns unique photos with a small thumbnail (resized from stored payload).
-    We keep it simple: return filenames + a placeholder thumbnail.
-    For real thumbnails, store them at index time (see admin route below).
-    """
     ensure_collection()
     client = get_db()
-
     total = client.count("faces").count
     pts, _ = client.scroll("faces", limit=2000, with_payload=True, with_vectors=False)
-
-    seen   = {}
-    photos = []
+    seen = {}
     for p in pts:
         fname = p.payload.get("file", "?")
         if fname not in seen:
             seen[fname] = {"thumbnail": p.payload.get("thumbnail", None), "face_count": 0}
         seen[fname]["face_count"] += 1
-
-    for fname, meta in seen.items():
-        photos.append({"file": fname, "thumbnail": meta["thumbnail"], "face_count": meta["face_count"]})
-
+    photos = [{"file": fname, "thumbnail": meta["thumbnail"], "face_count": meta["face_count"]}
+              for fname, meta in seen.items()]
     return jsonify({"total_faces": total, "photos": photos})
 
 
-# ── Admin-only: index & clear ─────────────────────────────────────────────────
-
 @app.route("/api/index", methods=["POST"])
 def api_index():
-
     ensure_collection()
     client = get_db()
     data   = request.json
-
     img = decode_image(data["image"])
     if img is None:
         return jsonify({"error": "Could not decode image"})
-
-    # Create a thumbnail — larger size, higher quality to preserve face detail
-    h, w   = img.shape[:2]
-    scale  = 256 / max(h, w)
-    thumb  = cv2.resize(img, (int(w*scale), int(h*scale)), interpolation=cv2.INTER_LANCZOS4)
+    h, w  = img.shape[:2]
+    scale = 256 / max(h, w)
+    thumb = cv2.resize(img, (int(w*scale), int(h*scale)), interpolation=cv2.INTER_LANCZOS4)
     _, buf = cv2.imencode(".jpg", thumb, [cv2.IMWRITE_JPEG_QUALITY, 92])
     thumb_b64 = base64.b64encode(buf).decode()
-
     ml_res = get_embeddings_from_ml(img)
     if "error" in ml_res:
         return jsonify({"error": ml_res["error"]})
-
     embeddings = ml_res.get("faces", [])
-    count      = client.count("faces").count
-
+    count = client.count("faces").count
     from qdrant_client.models import PointStruct
     for i, emb in enumerate(embeddings):
         client.upsert("faces", points=[PointStruct(
-            id      = count + i,
-            vector  = emb,
-            payload = {
-                "file":      data["filename"],
-                "face":      i,
-                "thumbnail": thumb_b64      # ← stored so gallery can show it
-            }
+            id=count + i, vector=emb,
+            payload={"file": data["filename"], "face": i, "thumbnail": thumb_b64}
         )])
-
     _save_backup(client)
     return jsonify({"faces": len(embeddings)})
 
@@ -1099,7 +934,6 @@ def api_delete():
     if not filename:
         return jsonify({"error": "No filename provided"})
     try:
-        # Find all point IDs with this filename
         pts, _ = client.scroll(
             "faces", limit=5000,
             scroll_filter=Filter(must=[FieldCondition(key="file", match=MatchValue(value=filename))]),
@@ -1116,7 +950,6 @@ def api_delete():
 
 @app.route("/api/clear", methods=["POST"])
 def api_clear():
-
     client = get_db()
     if client.collection_exists("faces"):
         client.delete_collection("faces")
@@ -1126,11 +959,8 @@ def api_clear():
     return jsonify({"message": "Collection cleared and recreated."})
 
 
-# ── Stats (admin convenience) ─────────────────────────────────────────────────
-
 @app.route("/api/stats")
 def api_stats():
-
     ensure_collection()
     client = get_db()
     total  = client.count("faces").count
@@ -1138,10 +968,6 @@ def api_stats():
     points = [{"id": p.id, "file": p.payload.get("file","?"), "face": p.payload.get("face",0)} for p in pts]
     return jsonify({"total": total, "points": points})
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  START
-# ═══════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
